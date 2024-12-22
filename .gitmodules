@@ -1,0 +1,3 @@
+[submodule "compot"]
+	path = compot
+	url = git@github.com:EmanuelLaude/compot.git
