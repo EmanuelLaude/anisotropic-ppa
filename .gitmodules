@@ -1,6 +1,6 @@
 [submodule "compot"]
 	path = third_party/compot
 	url = git@github.com:EmanuelLaude/compot.git
-[submodule "third_party/maros_meszaros_qpbenchmark"]
+[submodule "maros_meszaros_qpbenchmark"]
 	path = third_party/maros_meszaros_qpbenchmark
 	url = https://github.com/qpsolvers/maros_meszaros_qpbenchmark.git
