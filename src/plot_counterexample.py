@@ -1,17 +1,7 @@
-import matplotlib.pyplot as plt
 import numpy as np
 
-import matplotlib.cm as cm
-
-import numpy as np
-import matplotlib.cm as cm
-import matplotlib
 import matplotlib.pyplot as plt
-#import tikzplotlib
 
-#matplotlib.use('pgf')
-
-import os
 
 p = 4
 q = p / (p - 1)
