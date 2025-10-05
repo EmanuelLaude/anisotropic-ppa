@@ -132,7 +132,9 @@ class Proxable(ABC):
     def eval(self, x):
         return self.proxable.eval(x)
 
+
     def eval_isotropic_prox(self, y, v, proxfun, scaling = 1.):
+        """Returns argmin_x s Phi((x-y) / s)-<v,x> + g(x)"""
         def residual(tau):
             z = np.linalg.norm(self.proxable.eval_prox(y + 1. / tau * v, 1. / tau) - y)
 
@@ -184,21 +186,34 @@ class Proxable(ABC):
     def eval_anisotropic_prox(self, y, v, proxfun, scaling = 1.):
         pass
 
+
+
 class IndicatorBox(Proxable):
-    def __init__(self):
-        super().__init__(fun.IndicatorBox())
+    def __init__(self, l=-1, u=1):
+        super().__init__(fun.IndicatorBox(l, u))
+        self.l = l
+        self.u = u
 
     def eval_anisotropic_prox(self, y, v, proxfun, scaling=1.):
-        return np.minimum(1., np.maximum(-1., y + proxfun.eval_grad_conjugate(v, scaling)))
+        return np.minimum(self.u, np.maximum(self.l, y + proxfun.eval_grad_conjugate(v, scaling)))
 
+class Constant(Proxable):
+    def __init__(self, C= 0.):
+        super().__init__(fun.Constant(C=C))
 
-class IndicatorSimplex(Proxable):
+    def eval_anisotropic_prox(self, y, v, proxfun, scaling = 1.):
+        return y + proxfun.eval_grad_conjugate(v, scaling)
+
+    def eval_isotropic_prox(self, y, v, proxfun, scaling = 1.):
+        return y + proxfun.eval_grad_conjugate(v, scaling)
+
+class IndicatorUnitSimplex(Proxable):
     def __init__(self):
-        super().__init__(fun.IndicatorSimplex())
+        super().__init__(fun.IndicatorUnitSimplex())
     ##
     # minimize_{x in Delta} lamb phi((x - y) / lamb) - <x,b>
     ##
-    def eval_anisotropic_prox(self, y, b, proxfun, lamb):
+    def eval_anisotropic_prox(self, y, b, proxfun, lamb=1.):
         #implements bisection to find multiplier eta for dualizing the sum-to-one constraint
         #min_{x >=0 } max_eta phi(x - y) - <x, b> + eta * (<1, x> - 1)
         #returns [y - nabla phi^*(eta - b)]_+

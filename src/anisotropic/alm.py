@@ -1,14 +1,14 @@
 import numpy as np
 import compot.calculus.function as fun
-import compot.optimizer.base as opt_base
+import compot.optimizer.base as base
+import compot.optimizer.classic as cls
 
-from abc import ABC, abstractmethod
-
+from abc import abstractmethod
 
 class SaddlePointProblem:
-    def __init__(self, x0, y0, A, b, proxable_primal, diffable_primal, proxable_dual):
-        self.x0 = x0
-        self.y0 = y0
+    def __init__(self, x_init, y_init, A, b, proxable_primal, diffable_primal, proxable_dual):
+        self.x_init = x_init
+        self.y_init = y_init
         self.A = A
         self.b = b
 
@@ -28,83 +28,131 @@ class SaddlePointProblem:
 #min_x f(Ax-b) + g(x)
 #min_x max_y <Ax - b, y> + g(x) - f^*(y)
 #L_\lamb(x,y) \sup_{\eta} <Ax - b,\eta> -lambda * \phi(\eta - y) + g(x) - f^*(x)
-class AugmentedLagrangian(fun.Diffable):
-    def __init__(self, x, y, problem, proxfun_primal, proxfun_dual, lamb, sigma, solver, params, stopping_criterion):
+class AugmentedLagrangianFunction(fun.Diffable):
+    def __init__(self, x, y, problem, proxfun_primal, proxfun_dual, tau, sigma, oracle, params_oracle, maxit_cumsum_inner, bounds=None):
         #primal
         self.x = x
-        self.sigma = sigma
+        self.tau = tau
         self.proxfun_primal = proxfun_primal
 
         #dual
         self.y = y
-        self.lamb = lamb
+        self.sigma = sigma
+        self.bounds = bounds
         self.proxfun_dual = proxfun_dual
 
         self.problem = problem
-        self.solver = solver
-        self.stopping_criterion = stopping_criterion
-        self.params = params
+        self.oracle = oracle
+        self.maxit_cumsum_inner = maxit_cumsum_inner
+        self.params_oracle = params_oracle
 
-        self.iters_inner = 0
+        self.it_cumsum_inner = 0
 
     def eval_gradient(self, x):
-        v = np.dot(self.problem.A, x)
+        v = self.problem.A.apply(x) - self.problem.b
 
-        y = self.problem.proxable_dual.eval_prox(self.y, v - self.problem.b, self.proxfun_dual, self.lamb)
+        y = self.problem.proxable_dual.eval_prox(self.y, v, self.proxfun_dual, self.sigma)
 
-        return (np.dot(self.problem.A.T, y) + self.problem.diffable_primal.eval_gradient(x)
-                + (self.proxfun_primal.eval_grad(x - self.x, self.sigma) if self.sigma != np.Inf else 0.))
+        return (self.problem.A.apply_transpose(y) + self.problem.diffable_primal.eval_gradient(x)
+                + (self.proxfun_primal.eval_grad(x - self.x, self.tau) if self.tau != np.inf else 0.))
 
     def eval(self, x):
-        v = np.dot(self.problem.A, x)
+        v = self.problem.A.apply(x)
 
-        y = self.problem.proxable_dual.eval_prox(self.y, v - self.problem.b, self.proxfun_dual, self.lamb)
+        y = self.problem.proxable_dual.eval_prox(self.y, v - self.problem.b, self.proxfun_dual, self.sigma)
 
-        return (np.dot(v - self.problem.b, y) + self.problem.diffable_primal.eval(x) - self.proxfun_dual.eval(y - self.y, self.lamb)
-                + (self.proxfun_primal.eval(x - self.x, self.sigma) if self.sigma != np.Inf else 0.))
+        return (np.dot(v - self.problem.b, y) + self.problem.diffable_primal.eval(x) - self.proxfun_dual.eval(y - self.y, self.sigma)
+                + (self.proxfun_primal.eval(x - self.x, self.tau) if self.tau != np.inf else 0.))
 
-    def update_primal(self):
-        problem = opt_base.CompositeOptimizationProblem(self.x, self, self.problem.proxable_primal)
+    def update_primal(self, tol):
+        if self.bounds is None:
+            proxable_primal = self.problem.proxable_primal
+        else:
+            lb = self.x-self.bounds
+            ub = self.x+self.bounds
+            if isinstance(self.problem.proxable_primal, fun.IndicatorBox):
+                lb = np.maximum(lb, self.problem.proxable_primal._l)
+                ub = np.minimum(ub, self.problem.proxable_primal._u)
+            proxable_primal = fun.IndicatorBox(l=lb, u=ub)
+
+        problem = base.CompositeOptimizationProblem(self.x, self, proxable_primal)
         def callback(x, status):
-            #print("    ", status.nit, problem.eval_objective(x), np.linalg.norm(problem.diffable.eval_gradient(x)), status.res, status.tau)
+            if status.nit > 0:
+                self.it_cumsum_inner += 1
+            print("    ", status.nit, self.it_cumsum_inner, problem.eval_objective(x), status.fres)
 
-            return self.stopping_criterion(problem, x, status.nit)
+            if self.it_cumsum_inner >= self.maxit_cumsum_inner:
+                return True
+            return False
 
-
-        optimizer = self.solver(self.params, problem, callback=callback)
+        self.params_oracle.ftol = tol
+        self.params_oracle.gtol = tol
+        optimizer = self.oracle(self.params_oracle, problem, callback=callback)
         status = optimizer.run()
         self.x[:] = optimizer.x[:]
         return status
 
     def update_dual(self):
-        v = np.dot(self.problem.A, self.x)
+        v = self.problem.A.apply(self.x) - self.problem.b
 
-        self.y[:] = self.problem.proxable_dual.eval_prox(self.y, v - self.problem.b, self.proxfun_dual, self.lamb)[:]
+        self.y[:] = self.problem.proxable_dual.eval_prox(self.y, v, self.proxfun_dual, self.sigma)[:]
 
-
-
-class AugmentedLagrangianMethod:
-    def __init__(self, maxit, callback, solver, params, problem, lamb, sigma, proxfun_primal, proxfun_dual, stopping_criterion):
-
-        self.x = np.copy(problem.x0)
-        self.y = np.copy(problem.y0)
-        self.maxit = maxit
-        self.cumsum_iters_inner = 0
-        self.callback = callback
-        self.solver = solver
-
-        self.augmented_lagrangian = AugmentedLagrangian(self.x, self.y, problem,
-                 proxfun_primal, proxfun_dual, lamb, sigma, solver, params, stopping_criterion)
+class Status(base.Status):
+    def __init__(self, nit=0, res=np.inf, success=False, eps=1e-13, status_oracle=base.Status(), cumsum_iters_inner=0):
+        super().__init__(nit, res, success)
+        self.eps = eps
+        self.status_oracle = status_oracle
+        self.cumsum_iters_inner = cumsum_iters_inner
 
 
-    def run(self):
-        res = np.Inf
-        for i in range(self.maxit):
-            if self.callback(i, self.cumsum_iters_inner, self.x, self.y, res):
-                break
-            status = self.augmented_lagrangian.update_primal()
+class Parameters(base.Parameters):
+    def __init__(self, maxit=500, tol=1e-5, epsilon=1e-12, tau = 1.0, sigma = 1.0, class_oracle = cls.LBFGS,
+                 params_oracle = cls.Parameters(), maxit_cumsum_inner = 20000, proxfun_primal = None, proxfun_dual = None, stopping_criterion = None, tolerance=None):
+        super().__init__(maxit, tol, epsilon)
 
-            self.cumsum_iters_inner += status.nit
-            res = status.res
+        self.tau = tau
+        self.sigma = sigma
+        self.class_oracle = class_oracle
+        self.params_oracle = params_oracle
+        self.proxfun_primal = proxfun_primal
+        self.proxfun_dual = proxfun_dual
+        self.stopping_criterion = stopping_criterion
+        self.tolerance = tolerance
+        self.maxit_cumsum_inner = maxit_cumsum_inner
 
-            self.augmented_lagrangian.update_dual()
+class AugmentedLagrangianMethod(base.PrimalDualIterativeOptimizer):
+    def __init__(self, params, problem, callback):
+        super().__init__(params, problem, self.callback)
+        self._callback = callback
+        self.status = Status()
+
+    def callback(self, x, status):
+        result = self._callback(x, status)
+        if self.status.cumsum_iters_inner >= self.params.maxit_cumsum_inner:
+            return True
+
+        return result
+
+    def setup(self):
+        self.augmented_lagrangian = AugmentedLagrangianFunction(self.x, self.y, self.problem,
+                                                                self.params.proxfun_primal,
+                                                                self.params.proxfun_dual,
+                                                                self.params.tau,
+                                                                self.params.sigma,
+                                                                self.params.class_oracle,
+                                                                self.params.params_oracle,
+                                                                self.params.maxit_cumsum_inner,
+                                                                self.params.bounds)
+
+
+    def pre_step(self, _):
+        return np.inf
+
+    def step(self, k):
+        tol = self.params.tolerance(k)
+        self.status.status_oracle = self.augmented_lagrangian.update_primal(tol)
+
+        self.status.cumsum_iters_inner += self.status.status_oracle.nit
+
+        self.augmented_lagrangian.update_dual()
+
