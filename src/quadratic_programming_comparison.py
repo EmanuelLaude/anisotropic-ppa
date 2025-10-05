@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import matplotlib
 
-import compot.optimizer.scipy_wrapper as scipy_wrapper
+import third_party.compot.compot.optimizer.scipy_wrapper as scipy_wrapper
 import os
 
 import quadratic_programming as qp

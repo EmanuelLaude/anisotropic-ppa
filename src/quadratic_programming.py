@@ -1,8 +1,8 @@
 import numpy as np
 
 import compot
-import compot.misc.benchmarks as benchmarks
-import compot.calculus.function as fun
+import third_party.compot.compot.misc.benchmarks as benchmarks
+import third_party.compot.compot.calculus.function as fun
 
 import anisotropic.function as prox
 import anisotropic.alm as anisotropic_alm
